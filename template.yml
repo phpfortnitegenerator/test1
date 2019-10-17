@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A template for a Python-based Config Rule deployed to AWS Lambda.
+
+Transform:
+- AWS::Serverless-2016-10-31
+- AWS::CodeStar
+
+Parameters:
+  ProjectId:
+    Type: String
+    Description: AWS CodeStar projectID is used to associate new resources to this project.
+  CodeDeployRole:
+    Type: String
+    Description: IAM role to allow AWS CodeDeploy to manage deployment of AWS Lambda functions
+  Stage:
+    Type: String
+    Description: The name for a project pipeline stage, such as Staging or Prod, for which resources are provisioned and deployed.
+    Default: ''
+
+Globals:
+  Function:
+    AutoPublishAlias: live
+    DeploymentPreference:
+      Enabled: true
+      Type: Canary10Percent5Minutes
+      Role: !Ref CodeDeployRole
+
+Resources:
+  ConfigRuleLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: config.amazonaws.com
+      FunctionName:
+        Ref: ConfigRuleLambdaFunction
+  ConfigRuleLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: rule_code.lambda_handler
+      Runtime: python3.7
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+  ConfigRule:
+    DependsOn: ConfigRuleLambdaPermission
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName:
+        Ref: ProjectId
+      Description: Custom AWS Config Rule created with AWS Codestar to check whether your EC2 instances are of the specified instance type.
+      InputParameters:
+        desiredInstanceType: t2.micro
+      Scope:
+        ComplianceResourceTypes:
+          - 'AWS::EC2::Instance'
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceIdentifier:
+          Fn::GetAtt:
+          - ConfigRuleLambdaFunction
+          - Arn
+        SourceDetails:
+        - EventSource: aws.config
+          MessageType: ConfigurationItemChangeNotification
+        - EventSource: aws.config
+          MessageType: OversizedConfigurationItemChangeNotification
+  LambdaExecutionRole:
+    Description: Creating service role in IAM for AWS Lambda
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'CodeStar-${ProjectId}-Execution${Stage}'
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSConfigRulesExecutionRole'
+      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/CodeStar_${ProjectId}_PermissionsBoundary'
